@@ -539,6 +539,23 @@ function newChat() {
     render();
 }
 
+// folds into their pills the dialogs over window i; true if there were any
+function uncover(i) {
+    const g = geomOf(S.wins[i], S);
+    const over = el => { const r = layoutRect(el); return r.x < g.x + g.w && r.x + r.w > g.x && r.y < g.y + g.h && r.y + r.h > g.y; };
+    let n = 0;
+    for (const where of ['left', 'right']) {
+        const list = listOf(where);
+        list.filter((s, k) => { const el = elAt(where, k); return el && over(el); }).forEach(s => {
+            list.splice(list.indexOf(s), 1);
+            s.pinned = where === 'right';
+            toRow(s);
+            n++;
+        });
+    }
+    return n > 0;
+}
+
 function act(name) {
     const [verb, arg] = name.split(':');
     const h = S.history[+arg];
@@ -565,6 +582,9 @@ stage.addEventListener('click', e => {
     }
     const t = e.target;
     let el;
+    // maximized, going back to a window (even a click on its content) folds the dialogs lying over it
+    if ((el = t.closest('[data-win], [data-winpill]')) && S.full && uncover(+(el.dataset.win !== undefined ? el.dataset.win : el.dataset.winpill))
+        && !t.closest('[data-mv], [data-tab]')) return render();
     if ((el = t.closest('[data-act]'))) return act(el.dataset.act);
     if ((el = t.closest('[data-close]'))) return closeSpec(el.dataset.close);
     if ((el = t.closest('[data-pin]'))) return pinSpec(el.dataset.pin);
