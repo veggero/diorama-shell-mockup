@@ -122,7 +122,7 @@ function footHTML(id) {
 function windowHTML(s, i, v) {
     const g = geomOf(s, v), id = s.tabs[s.on], grouped = s.tabs.length > 1, full = v.full;
     const tabs = s.tabs.map((t, j) => `<div class="seg${grouped ? ' tabseg' + (j === s.on ? ' on' : ' off') : ''}${tornTab(s, j)}" data-tab="wins:${i}:${j}">${icon16(t)}<span class="semi">${esc(titleOf(t))}</span>${busy(t) ? '<span class="spinner"></span>' : ''}</div>`).join('');
-    const moves = ['dialog', 'pill', 'pin', 'full'].map(d => {
+    const moves = ['dialog', 'full', 'pin', 'pill'].map(d => {
         const m = s.pinned && d === 'pill' ? 'pillR' : s.pinned && d === 'dialog' ? 'unpin' : d;
         return `<div class="seg mv${d === 'full' && full ? ' cur' : ''}" data-mv="${i}:${d}" data-tip="${d === 'full' && full ? 'Back to normal size' : MAPS[m][0]}">${glyph(m)}</div>`;
     }).join('');
@@ -764,17 +764,20 @@ function nearestIn(where, p, entering = false) {
     return pick(best.s, insertAt(where, best.s, best.after));
 }
 
-// undefined: not over this window
-function winTarget(i, p) {
-    const v = shown, s = v.wins[i];
-    const pill = stage.querySelector(`[data-winpill="${i}"]`), win = stage.querySelector(`[data-win="${i}"]`);
-    if (inside(layoutRect(pill), p)) return pick(s, s === op.slot ? null : { kind: 'group', slot: s, el: pill });
-    if (!inside(layoutRect(win), p, 8)) return undefined;
+// a window's pill, by its geometry: it sits just above the window's top-left corner
+const pillBox = (s, v) => { const g = geomOf(s, v), el = stage.querySelector(`[data-k="p${s.id}"]`); return { x: g.x, y: g.y - 36, w: el ? el.offsetWidth : 200, h: 32 }; };
+
+// undefined: not over this window. v: the windows as previewed, or as they really are while the preview is only
+// maximized or restored by the top band; then the carried window over its own real spot goes back to it.
+function winTarget(i, p, v = shown) {
+    const s = v.wins[i], g = geomOf(s, v);
+    const own = t => v !== shown && s === op.ph ? null : pick(s, t);
+    if (inside(pillBox(s, v), p)) return own(s === op.slot ? null : { kind: 'group', slot: s, el: stage.querySelector(`[data-k="p${s.id}"]`) });
+    if (!inside(g, p, 8)) return undefined;
     // two windows stay: it takes this one's place. Otherwise the two share the area.
     const stay = S.wins.filter(w => op.tab !== null || w !== op.slot);
-    if (stay.length === 2) return pick(s, s === op.slot ? null : { kind: 'replace', slot: s });
-    const r = layoutRect(win);
-    return pick(s, { kind: 'split', slot: s, half: p.x < r.x + r.w / 2 ? 'left' : 'right' });
+    if (stay.length === 2) return own(s === op.slot ? null : { kind: 'replace', slot: s });
+    return own({ kind: 'split', slot: s, half: p.x < g.x + g.w / 2 ? 'left' : 'right' });
 }
 
 const MAXBAND = 120;     // the windows' pills start just below it
@@ -786,8 +789,10 @@ function findTarget(p) {
     // own pill there still takes tabs. Maximized, a window carried down out of that band goes back to normal size,
     // unless it goes to a screen edge, where the dialog columns are.
     const win = op.where === 'wins' && op.tab === null;
-    const pill = v.wins.findIndex((s, i) => inside(layoutRect(stage.querySelector(`[data-winpill="${i}"]`)), p));
-    if (pill >= 0) return winTarget(pill, p);
+    // a preview that only maximizes or restores moves every window: they are hit where they really are
+    const real = op.target && ['max', 'unmax'].includes(op.target.kind) ? { wins: [...S.wins], full: S.full } : v;
+    const pill = real.wins.findIndex(s => inside(pillBox(s, real), p));
+    if (pill >= 0) return winTarget(pill, p, real);
     if (S.full && win) {
         if (p.y < MAXBAND) return null;
         if (p.x >= 160 && p.x <= 1760 && p.y < 1080 - S.pillH - 28) return { kind: 'unmax' };
@@ -805,7 +810,7 @@ function findTarget(p) {
     }
     // maximized, the windows lie under the dialog columns: the sides still take dialogs (a window's pill still takes tabs)
     if (S.full && (p.x < COLS.l || p.x > COLS.r) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
-    for (let i = 0; i < v.wins.length; i++) { const t = winTarget(i, p); if (t !== undefined) return t; }
+    for (let i = 0; i < real.wins.length; i++) { const t = winTarget(i, p, real); if (t !== undefined) return t; }
     // empty desktop: the band above the pills, and the two dialog columns
     if (p.y > 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'pillsL' : 'pillsR', p);
     if (p.x < COLS.l) return nearestIn('left', p);
@@ -866,8 +871,9 @@ function regionBox(g) {
     if (g === 'open') return HOME;
     if (g === 'max') return { x: 0, y: 0, w: 1920, h: MAXBAND };
     if (g === 'unmax') return { x: 160, y: MAXBAND, w: 1600, h: 1080 - S.pillH - 28 - MAXBAND };
-    const w = g[0] === 'w' && stage.querySelector(`.window[data-k="${g.slice(1)}"]`);
-    return w ? layoutRect(w) : null;
+    // a window, where it really is (a maximize preview may have it elsewhere, or not at all)
+    const w = [...S.wins, ...shown.wins].find(s => `w${s.id}` === g);
+    return w ? geomOf(w, S.wins.includes(w) ? S : shown) : null;
 }
 function headedFor(t, p) {
     const h = op.head;
@@ -876,7 +882,7 @@ function headedFor(t, p) {
     const r = regionBox(regionOf(t));
     if (!r) return false;
     // where the pointer will be in a moment if it goes on the same way (pushed into the screen's edge, it stays there)
-    const k = h.speed * 150 / Math.hypot(h.dx, h.dy);
+    const k = Math.min(h.speed * 150, 160) / Math.hypot(h.dx, h.dy);
     return inside(r, { x: clamp(p.x + h.dx * k, 0, 1919), y: clamp(p.y + h.dy * k, 0, 1079) });
 }
 
@@ -893,7 +899,7 @@ function track(p, settle = false) {
     op.target = t;
     const k = viewKey(t);
     if (k !== null && k !== op.view) { op.view = k; render(true, viewFor(t)); }
-    if (t && t.kind === 'group') { t.el.classList.add('droptarget'); op.mark = () => t.el.classList.remove('droptarget'); }
+    if (t && t.kind === 'group' && t.el) { t.el.classList.add('droptarget'); op.mark = () => t.el.classList.remove('droptarget'); }
 }
 
 // takes the dragged thing out of where it was and returns it as a slot
