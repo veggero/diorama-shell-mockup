@@ -18,6 +18,8 @@ const S = {
     pillsR: slots(LAYOUT.pillsR, true),
     history: LAYOUT.history.map(h => ({ slot: slot(...h.tabs), when: h.when })),
     hq: '', pillH: 32,
+    // maximized is one state for the whole desktop, not a window's: whatever is the window fills the screen
+    full: false,
 };
 // Claude's footer under each window is hidden for now
 const FOOTER = false;
@@ -53,8 +55,8 @@ const icon22 = id => !it(id).icon ? '' : it(id).icon.includes('/16/') ? ico(it(i
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const fullRect = () => ({ x: 24, y: 56, w: 1872, h: 1080 - 56 - S.pillH - 36 });
 const halves = g => { const w = Math.round((g.w - 16) / 2); return [{ ...g, w }, { ...g, x: g.x + w + 16, w: g.w - 16 - w }]; };
-const isFull = (s, wins) => s.full && wins.length === 1;
-const geomOf = (s, wins) => wins.length === 2 ? halves(HOME)[wins.indexOf(s)] : isFull(s, wins) ? fullRect() : { ...HOME };
+// v: S, or a drag preview of it; maximized, two windows still share the screen half and half
+const geomOf = (s, v) => { const g = v.full ? fullRect() : { ...HOME }; return v.wins.length === 2 ? halves(g)[v.wins.indexOf(s)] : g; };
 
 // ---------- pieces ----------
 // an item whose pill shows a moving number names it with pillLive, so the ticker can update it in place
@@ -117,18 +119,17 @@ function footHTML(id) {
         + `<div class="askrow"><div class="field ask"><span class="grow">${esc(ph)}</span><span class="btn flat icon" style="height: 26px; width: 26px;">${ico('actions/16/document-send')}</span></div></div></div>`;
 }
 
-function windowHTML(s, i, wins) {
-    const g = geomOf(s, wins), id = s.tabs[s.on], grouped = s.tabs.length > 1, full = isFull(s, wins);
+function windowHTML(s, i, v) {
+    const g = geomOf(s, v), id = s.tabs[s.on], grouped = s.tabs.length > 1, full = v.full;
     const tabs = s.tabs.map((t, j) => `<div class="seg${grouped ? ' tabseg' + (j === s.on ? ' on' : ' off') : ''}${tornTab(s, j)}" data-tab="wins:${i}:${j}">${icon16(t)}<span class="semi">${esc(titleOf(t))}</span>${busy(t) ? '<span class="spinner"></span>' : ''}</div>`).join('');
     const moves = ['dialog', 'pill', 'pin', 'full'].map(d => {
         const m = s.pinned && d === 'pill' ? 'pillR' : s.pinned && d === 'dialog' ? 'unpin' : d;
         return `<div class="seg mv${d === 'full' && full ? ' cur' : ''}" data-mv="${i}:${d}" data-tip="${d === 'full' && full ? 'Back to normal size' : MAPS[m][0]}">${glyph(m)}</div>`;
     }).join('');
     const page = it(id).page ? it(id).page() : `<div class="page"><div class="phead"><div class="col grow"><span class="t">${esc(titleOf(id))}</span></div></div><div class="panel aspage">${it(id).dialog()}</div></div>`;
-    // full screen covers the dialogs; the pill rows stay below it
-    const z = full ? [12, 13] : [2, 6];
-    return `<div class="pill wtab${ghostly(s)}" data-k="p${s.id}" data-winpill="${i}" data-drag="wins:${i}" style="position: absolute; left: ${g.x}px; top: ${g.y - 36}px; z-index: ${z[1]};">${tabs}${moves}</div>`
-        + `<div class="window${ghostly(s)}" data-k="${s.id}" data-win="${i}" style="left: ${g.x}px; top: ${g.y}px; width: ${g.w}px; height: ${g.h}px; z-index: ${z[0]};"><div class="app" data-page="${id}">${page}</div>${FOOTER ? footHTML(id) : ''}</div>`;
+    // dialogs show on top of the windows, maximized or not
+    return `<div class="pill wtab${ghostly(s)}" data-k="p${s.id}" data-winpill="${i}" data-drag="wins:${i}" style="position: absolute; left: ${g.x}px; top: ${g.y - 36}px; z-index: 6;">${tabs}${moves}</div>`
+        + `<div class="window${ghostly(s)}" data-k="${s.id}" data-win="${i}" style="left: ${g.x}px; top: ${g.y}px; width: ${g.w}px; height: ${g.h}px; z-index: 2;"><div class="app" data-page="${id}">${page}</div>${FOOTER ? footHTML(id) : ''}</div>`;
 }
 
 // ---------- render: the whole desktop is rebuilt from S, then moved pieces glide from where they were ----------
@@ -137,13 +138,11 @@ let scale = 1;
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function desktopHTML(v) {
-    let h = v.wins.map((s, i) => windowHTML(s, i, v.wins)).join('');
+    let h = v.wins.map((s, i) => windowHTML(s, i, v)).join('');
     // each column sits on its own pill row, so a row that wraps only lifts the dialogs above it
     const bottom = side => `bottom: calc(var(--pillh${side}, 32px) + 32px);`;
-    // a full-screen window hides the dialogs
-    const cover = v.wins.some(s => isFull(s, v.wins)) ? ' covered' : '';
-    h += `<div class="stack left${cover}" style="${bottom('L')}">${v.left.map((s, i) => dialogHTML(s, 'left', i)).join('')}</div>`;
-    h += `<div class="stack right${cover}" style="${bottom('R')}">${v.right.map((s, i) => dialogHTML(s, 'right', i)).join('')}</div>`;
+    h += `<div class="stack left" style="${bottom('L')}">${v.left.map((s, i) => dialogHTML(s, 'left', i)).join('')}</div>`;
+    h += `<div class="stack right" style="${bottom('R')}">${v.right.map((s, i) => dialogHTML(s, 'right', i)).join('')}</div>`;
     h += `<div class="pills left" style="bottom: 12px;"><div class="pillrow">${v.pillsL.map((s, i) => pillHTML(s, 'pillsL', i)).join('')}</div></div>`;
     h += `<div class="pills right" style="bottom: 12px;"><div class="pillrow">${v.pillsR.map((s, i) => pillHTML(s, 'pillsR', i)).join('')}</div></div>`;
     return h;
@@ -186,7 +185,7 @@ function layoutPass(v, preview) {
     stage.style.setProperty('--pillhL', rows[0].offsetHeight + 'px');
     stage.style.setProperty('--pillhR', rows[1].offsetHeight + 'px');
     const ph = Math.max(...rows.map(p => p.offsetHeight));
-    if (!preview && ph !== S.pillH) { S.pillH = ph; if (S.wins.some(w => w.full)) return true; }
+    if (!preview && ph !== S.pillH) { S.pillH = ph; if (S.full && S.wins.length) return true; }
     const keep = preview ? op.ph : placed;
     const fold = (from, k) => {
         const s = v[from].splice(k, 1)[0], where = from === 'left' ? 'pillsL' : 'pillsR';
@@ -229,7 +228,6 @@ function snapshot() {
     stage.querySelectorAll('.morph[data-mk]').forEach(c => { const e = m.get(c.dataset.mk); if (e) e.r = c.getBoundingClientRect(); });
     const g = stage.querySelector('.ghost');
     if (g) m.set('ghost', { r: g.getBoundingClientRect(), el: g, look: lookOf(g), z: 100 });
-    m.covered = !!stage.querySelector('.stack.covered');
     return m;
 }
 
@@ -263,10 +261,6 @@ function flip(before, preview) {
         el.animate([{ height: `${ab.h}px` }, { height: `${b.h}px` }], { duration: 300, easing: EASE }).onfinish = () => el.classList.remove('sizing');
     });
 
-    // going full screen, the dialogs fade out; coming back, they fade in where they are
-    const covered = !!stage.querySelector('.stack.covered');
-    if (covered && !before.covered) stage.querySelectorAll('.stack').forEach(s => s.animate([{ opacity: 1, visibility: 'visible' }, { opacity: 0, visibility: 'visible' }], { duration: 220, easing: 'ease-out' }));
-
     // A pill carried out of a row leaves only a gap there, since the carried pill stands for it. Where a dialog or
     // window would land shows faded, and glides from spot to spot like anything else; where it first shows up, or
     // fills a gap, it grows out of the carried pill. Dropped onto its faded preview, it just firms up.
@@ -274,10 +268,9 @@ function flip(before, preview) {
     const gap = n => n.classList.contains('dragsrc') && !!n.closest('.pills');
     const morphs = [];
     now.forEach((el, k) => {
-        if (el.closest('.stack.covered') || gap(el)) return;
+        if (gap(el)) return;
         const b = box(el.getBoundingClientRect()), faded = el.classList.contains('dragsrc');
         if (!b.w || !b.h) return;
-        if (before.covered && el.closest('.stack')) return morphs.push([k, null, b, el, b, layerOf(el)]);
         let a = before.get(k);
         if (preview) return previewFlight(el, k, a, b);
         if (a && gap(a.el) || faded && !a) a = ghost;
@@ -432,7 +425,7 @@ function updateLive() {
 }
 
 // ---------- moving things between places ----------
-const demote = s => { s.full = false; (s.pinned ? S.right : S.left).push(s); };
+const demote = s => (s.pinned ? S.right : S.left).push(s);
 
 // A pill that leaves its row remembers its neighbours, so when it folds back it lands in the same spot.
 // A pill that never had a spot lands at the inner end of its row.
@@ -449,7 +442,6 @@ function rowSpot(s, list, where) {
     return Math.min(h.i, list.length);
 }
 function toRow(s) {
-    s.full = false;
     const where = s.pinned ? 'pillsR' : 'pillsL', list = listOf(where);
     list.splice(rowSpot(s, list, where), 0, s);
     delete s.home;
@@ -457,23 +449,24 @@ function toRow(s) {
 
 // a dialog or pill that becomes the window takes the focused window's place; that window steps back
 function toWindow(s) {
-    s.full = false;
     if (!S.wins.length) { S.wins.push(s); S.focus = 0; return; }
     const i = clamp(S.focus, 0, S.wins.length - 1), old = S.wins[i];
-    s.full = old.full;
     demote(old);
     S.wins[i] = s;
     S.focus = i;
 }
 
+// Maximizing folds every dialog into its pill; dialogs opened afterwards show on top of the windows.
+// It stays on while windows come and go, until it is turned off.
+function setFull(on) {
+    S.full = on;
+    if (on) for (const where of ['left', 'right']) listOf(where).splice(0).forEach(s => { s.pinned = where === 'right'; toRow(s); });
+}
+
 // a window that leaves a split hands the whole area to the other one
 function moveWin(i, dest) {
     const s = S.wins[i];
-    if (dest === 'full') {
-        if (s.full) s.full = false;
-        else { s.full = true; S.wins.filter(w => w !== s).forEach(demote); S.wins = [s]; S.focus = 0; }
-        return render();
-    }
+    if (dest === 'full') { setFull(!S.full); return render(); }
     S.wins.splice(i, 1);
     S.focus = 0;
     if (dest === 'dialog') { s.pinned = false; S.left.push(s); }
@@ -786,8 +779,12 @@ function winTarget(i, p) {
 
 function findTarget(p) {
     const v = shown;
-    const full = v.wins.findIndex(s => isFull(s, v.wins));
-    if (full >= 0) { const t = winTarget(full, p); if (t !== undefined) return t; }
+    // The top edge of the screen maximizes: a window, or anything else as the window (a window's own pill up there
+    // still takes tabs). Maximized, a window carried back toward the middle goes back to normal size.
+    const win = op.where === 'wins' && op.tab === null;
+    const onPill = v.wins.some((s, i) => inside(layoutRect(stage.querySelector(`[data-winpill="${i}"]`)), p));
+    if (p.y < 40 && !onPill && !(S.full && win)) return { kind: 'max' };
+    if (S.full && win && inside(HOME, p)) return { kind: 'unmax' };
     for (const where of ['left', 'right']) {
         for (let i = 0; i < v[where].length; i++) {
             const el = elAt(where, i), r = layoutRect(el), s = v[where][i];
@@ -799,6 +796,8 @@ function findTarget(p) {
     for (const where of ['pillsL', 'pillsR']) {
         if (inside(layoutRect(stage.querySelector(`.pills.${where === 'pillsL' ? 'left' : 'right'}`)), p, 12)) return nearestIn(where, p);
     }
+    // maximized, the windows lie under the dialog columns: the sides still take dialogs (a window's pill still takes tabs)
+    if (S.full && !onPill && (p.x < 424 || p.x > 1496) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
     for (let i = 0; i < v.wins.length; i++) { const t = winTarget(i, p); if (t !== undefined) return t; }
     // empty desktop: the band above the pills, and the two dialog columns
     if (p.y > 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'pillsL' : 'pillsR', p);
@@ -811,9 +810,19 @@ function findTarget(p) {
 
 // the lists as they would be after dropping on t
 function viewFor(t) {
-    const v = { wins: [...S.wins], left: [...S.left], right: [...S.right], pillsL: [...S.pillsL], pillsR: [...S.pillsR] };
+    const v = { wins: [...S.wins], left: [...S.left], right: [...S.right], pillsL: [...S.pillsL], pillsR: [...S.pillsR], full: S.full };
     if (!t || t.kind === 'group') return v;
+    if (t.kind === 'unmax') { v.full = false; return v; }
+    const win = op.where === 'wins' && op.tab === null;
+    if (t.kind === 'max' && win) return maxView(v);
     if (op.tab === null) v[op.where] = v[op.where].filter(s => s !== op.slot);
+    // anything else carried to the top becomes the window in the focused one's place, and that one a pill
+    if (t.kind === 'max') {
+        const i = clamp(S.focus, 0, v.wins.length - 1), old = v.wins[i];
+        v.wins.splice(Math.max(i, 0), old ? 1 : 0, op.ph);
+        if (old) v[old.pinned ? 'right' : 'left'].push(old);
+        return maxView(v);
+    }
     if (t.kind === 'insert') {
         const l = v[t.where], k = t.before ? l.indexOf(t.before) : -1;
         l.splice(k < 0 ? l.length : k, 0, op.ph);
@@ -824,22 +833,31 @@ function viewFor(t) {
     return v;
 }
 
+// maximized in a preview: the dialogs fold into their pills, as setFull does
+function maxView(v) {
+    v.full = true;
+    for (const [from, where] of [['left', 'pillsL'], ['right', 'pillsR']]) v[from].splice(0).forEach(s => v[where].splice(rowSpot(s, v[where], where), 0, s));
+    return v;
+}
+
 // a group target keeps the current picture, so the title under the pointer stays put
 const viewKey = t => !t ? 'here' : t.kind === 'insert' ? `i:${t.where}:${t.before ? t.before.id : ''}`
-    : t.kind === 'split' ? `s:${t.slot.id}:${t.half}` : t.kind === 'replace' ? `r:${t.slot.id}` : t.kind === 'open' ? 'o' : null;
+    : t.kind === 'split' ? `s:${t.slot.id}:${t.half}` : t.kind === 'replace' ? `r:${t.slot.id}`
+    : ['open', 'max', 'unmax'].includes(t.kind) ? t.kind : null;
 const targetKey = t => t && t.kind === 'group' ? `g:${t.slot.id}` : viewKey(t);
 
 // Moving fast, only the place the pointer is headed for takes the preview: crossing a window on the way to a
 // dialog column, the window is passed by. A new place is taken at once when the pointer is slow or heading into
 // it (its middle within 45° of the way it moves); one it is only passing through, once the pointer stays a moment.
-const regionOf = t => !t ? 'none' : t.kind === 'insert' ? t.where : t.kind === 'open' ? 'open'
+const regionOf = t => !t ? 'none' : t.kind === 'insert' ? t.where : ['open', 'max', 'unmax'].includes(t.kind) ? t.kind
     : shown.left.includes(t.slot) ? 'left' : shown.right.includes(t.slot) ? 'right' : `w${t.slot.id}`;
 function regionBox(g) {
     const zone = { x: 0, y: 0, w: 424, h: 1080 - S.pillH - 28 };
     if (g === 'left') return zone;
     if (g === 'right') return { ...zone, x: 1496 };
     if (g === 'pillsL' || g === 'pillsR') return layoutRect(stage.querySelector(`.pills.${g === 'pillsL' ? 'left' : 'right'}`));
-    if (g === 'open') return HOME;
+    if (g === 'open' || g === 'unmax') return HOME;
+    if (g === 'max') return { x: 0, y: 0, w: 1920, h: 40 };
     const w = g[0] === 'w' && stage.querySelector(`.window[data-k="${g.slice(1)}"]`);
     return w ? layoutRect(w) : null;
 }
@@ -894,7 +912,14 @@ function endDrag() {
         op = null;
         return render();
     }
+    // a window carried to the top, or back to the middle, only changes maximized
+    if (t.kind === 'unmax' || (t.kind === 'max' && op.where === 'wins' && op.tab === null)) {
+        setFull(t.kind === 'max');
+        op = null;
+        return render();
+    }
     const m = takeDragged();
+    if (t.kind === 'max') { toWindow(m); setFull(true); }
     if (t.kind === 'group') {
         t.slot.tabs.push(...m.tabs);
         t.slot.on = t.slot.tabs.length - m.tabs.length;
@@ -902,25 +927,22 @@ function endDrag() {
     }
     if (t.kind === 'insert') {
         const list = listOf(t.where), k = t.before ? list.indexOf(t.before) : -1;
-        m.full = false;
         m.pinned = t.where === 'right' || t.where === 'pillsR';
         if (t.where.startsWith('pills')) delete m.home;     // put in a row by hand: that is its spot now
         list.splice(k < 0 ? list.length : k, 0, m);
     }
     if (t.kind === 'split') {
         const k = S.wins.indexOf(t.slot);
-        t.slot.full = m.full = false;
         S.wins.splice(t.half === 'left' ? k : k + 1, 0, m);
         S.focus = S.wins.indexOf(m);
     }
     if (t.kind === 'replace') {
         const k = S.wins.indexOf(t.slot);
-        m.full = false;
         demote(t.slot);
         S.wins[k] = m;
         S.focus = k;
     }
-    if (t.kind === 'open') { m.full = false; S.wins.push(m); S.focus = S.wins.length - 1; }
+    if (t.kind === 'open') { S.wins.push(m); S.focus = S.wins.length - 1; }
     op = null;
     placed = m;
     render();
@@ -943,7 +965,7 @@ let swipe = null, swipeBack = null, swipeTimer = 0;
 function swipeAction(t, dir) {
     let el;
     if ((el = t.closest('[data-win], [data-winpill]'))) {
-        const i = +(el.dataset.win !== undefined ? el.dataset.win : el.dataset.winpill), s = S.wins[i], full = isFull(s, S.wins);
+        const i = +(el.dataset.win !== undefined ? el.dataset.win : el.dataset.winpill), s = S.wins[i], full = S.full;
         const d = { up: full ? null : 'full', down: full ? 'full' : 'pill', left: 'dialog', right: 'pin' }[dir];
         return d ? { s, run: () => moveWin(i, d) } : null;
     }
