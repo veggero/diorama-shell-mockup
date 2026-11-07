@@ -665,7 +665,7 @@ window.addEventListener('pointermove', e => {
     op.trail = (op.trail || []).filter(([t]) => now - t < 100);
     op.trail.push([now, p]);
     const [t0, p0] = op.trail[0];
-    op.head = { dx: p.x - p0.x, dy: p.y - p0.y, speed: now > t0 ? Math.hypot(p.x - p0.x, p.y - p0.y) / (now - t0) : 0 };
+    op.head = now > t0 && (p.x !== p0.x || p.y !== p0.y) ? { dx: p.x - p0.x, dy: p.y - p0.y, speed: Math.hypot(p.x - p0.x, p.y - p0.y) / (now - t0) } : null;
     track(p);
 });
 
@@ -777,14 +777,21 @@ function winTarget(i, p) {
     return pick(s, { kind: 'split', slot: s, half: p.x < r.x + r.w / 2 ? 'left' : 'right' });
 }
 
+const MAXBAND = 120;     // the windows' pills start just below it
+// the dialog columns on an empty desktop end just short of the window, so a window's pill never starts inside one
+const COLS = { l: HOME.x - 8, r: HOME.x + HOME.w + 8 };
 function findTarget(p) {
     const v = shown;
-    // The top edge of the screen maximizes: a window, or anything else as the window (a window's own pill up there
-    // still takes tabs). Maximized, a window carried back toward the middle goes back to normal size.
+    // The band above the windows (corners included) maximizes: a window, or anything else as the window. A window's
+    // own pill there still takes tabs. Maximized, a window carried down out of that band goes back to normal size,
+    // unless it goes to a screen edge, where the dialog columns are.
     const win = op.where === 'wins' && op.tab === null;
-    const onPill = v.wins.some((s, i) => inside(layoutRect(stage.querySelector(`[data-winpill="${i}"]`)), p));
-    if (p.y < 40 && !onPill && !(S.full && win)) return { kind: 'max' };
-    if (S.full && win && inside(HOME, p)) return { kind: 'unmax' };
+    const pill = v.wins.findIndex((s, i) => inside(layoutRect(stage.querySelector(`[data-winpill="${i}"]`)), p));
+    if (pill >= 0) return winTarget(pill, p);
+    if (S.full && win) {
+        if (p.y < MAXBAND) return null;
+        if (p.x >= 160 && p.x <= 1760 && p.y < 1080 - S.pillH - 28) return { kind: 'unmax' };
+    } else if (p.y < MAXBAND) return { kind: 'max' };
     for (const where of ['left', 'right']) {
         for (let i = 0; i < v[where].length; i++) {
             const el = elAt(where, i), r = layoutRect(el), s = v[where][i];
@@ -797,12 +804,12 @@ function findTarget(p) {
         if (inside(layoutRect(stage.querySelector(`.pills.${where === 'pillsL' ? 'left' : 'right'}`)), p, 12)) return nearestIn(where, p);
     }
     // maximized, the windows lie under the dialog columns: the sides still take dialogs (a window's pill still takes tabs)
-    if (S.full && !onPill && (p.x < 424 || p.x > 1496) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
+    if (S.full && (p.x < COLS.l || p.x > COLS.r) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
     for (let i = 0; i < v.wins.length; i++) { const t = winTarget(i, p); if (t !== undefined) return t; }
     // empty desktop: the band above the pills, and the two dialog columns
     if (p.y > 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'pillsL' : 'pillsR', p);
-    if (p.x < 24 + 400) return nearestIn('left', p);
-    if (p.x > 1920 - 24 - 400) return nearestIn('right', p);
+    if (p.x < COLS.l) return nearestIn('left', p);
+    if (p.x > COLS.r) return nearestIn('right', p);
     // the middle of a desktop with no window left: it becomes the window
     if (!S.wins.some(w => op.tab !== null || w !== op.slot)) return { kind: 'open' };
     return null;
@@ -848,26 +855,29 @@ const targetKey = t => t && t.kind === 'group' ? `g:${t.slot.id}` : viewKey(t);
 
 // Moving fast, only the place the pointer is headed for takes the preview: crossing a window on the way to a
 // dialog column, the window is passed by. A new place is taken at once when the pointer is slow or heading into
-// it (its middle within 45° of the way it moves); one it is only passing through, once the pointer stays a moment.
+// it (still inside it a moment later at that pace); one it is only passing through, once the pointer stays a moment.
 const regionOf = t => !t ? 'none' : t.kind === 'insert' ? t.where : ['open', 'max', 'unmax'].includes(t.kind) ? t.kind
     : shown.left.includes(t.slot) ? 'left' : shown.right.includes(t.slot) ? 'right' : `w${t.slot.id}`;
 function regionBox(g) {
-    const zone = { x: 0, y: 0, w: 424, h: 1080 - S.pillH - 28 };
+    const zone = { x: 0, y: MAXBAND, w: COLS.l, h: 1080 - S.pillH - 28 - MAXBAND };     // the band above maximizes
     if (g === 'left') return zone;
-    if (g === 'right') return { ...zone, x: 1496 };
+    if (g === 'right') return { ...zone, x: COLS.r, w: 1920 - COLS.r };
     if (g === 'pillsL' || g === 'pillsR') return layoutRect(stage.querySelector(`.pills.${g === 'pillsL' ? 'left' : 'right'}`));
-    if (g === 'open' || g === 'unmax') return HOME;
-    if (g === 'max') return { x: 0, y: 0, w: 1920, h: 40 };
+    if (g === 'open') return HOME;
+    if (g === 'max') return { x: 0, y: 0, w: 1920, h: MAXBAND };
+    if (g === 'unmax') return { x: 160, y: MAXBAND, w: 1600, h: 1080 - S.pillH - 28 - MAXBAND };
     const w = g[0] === 'w' && stage.querySelector(`.window[data-k="${g.slice(1)}"]`);
     return w ? layoutRect(w) : null;
 }
 function headedFor(t, p) {
     const h = op.head;
-    if (!h || h.speed < 0.4) return true;
+    if (!h) return false;     // no way yet: only if it stays
+    if (h.speed < 0.4) return true;
     const r = regionBox(regionOf(t));
     if (!r) return false;
-    const cx = r.x + r.w / 2 - p.x, cy = r.y + r.h / 2 - p.y;
-    return (h.dx * cx + h.dy * cy) / (Math.hypot(h.dx, h.dy) * Math.hypot(cx, cy) || 1) > Math.SQRT1_2;
+    // where the pointer will be in a moment if it goes on the same way (pushed into the screen's edge, it stays there)
+    const k = h.speed * 150 / Math.hypot(h.dx, h.dy);
+    return inside(r, { x: clamp(p.x + h.dx * k, 0, 1919), y: clamp(p.y + h.dy * k, 0, 1079) });
 }
 
 function track(p, settle = false) {
