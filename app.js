@@ -2,11 +2,11 @@
 // Every item is always in exactly one place: a window (wins), a recent dialog (left), a pinned dialog (right),
 // a pill (pillsL / pillsR), or History. A place holds a slot: one item, or a group of tabs.
 // Clicking a pill turns it into a dialog; closing a dialog turns it back into a pill, in the spot it left.
-// Windows are never moved or resized: one window sits in the middle, two share that area half and half.
+// Windows are never moved or resized by hand: one window fills the room the dialog columns leave, two share it half
+// and half.
 
 let nextId = 1;
 const slot = (...tabs) => ({ id: nextId++, tabs, on: 0, pinned: false });
-const HOME = { x: 400, y: 176, w: 1120, h: 700 };
 // the desktop starts as items.js lays it out
 const slots = (rows, pinned) => rows.map(tabs => ({ ...slot(...tabs), pinned }));
 const S = {
@@ -53,10 +53,19 @@ const busy = id => !!(it(id).busy && it(id).busy());
 const icon16 = id => it(id).icon ? ico(it(id).icon) : '';
 const icon22 = id => !it(id).icon ? '' : it(id).icon.includes('/16/') ? ico(it(id).icon, 'ico22" style="padding: 3px;') : ico(it(id).icon, 'ico22');
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const fullRect = () => ({ x: 24, y: 56, w: 1872, h: 1080 - 56 - S.pillH - 36 });
+// windows end where the dialog columns end, just above the pill rows
+const fullRect = () => ({ x: 24, y: 56, w: 1872, h: 1080 - 56 - S.pillH - 32 });
+// Not maximized, a window takes the room between the dialog columns that are open, with a margin on a side that has
+// none, so it moves over when only one side has dialogs. Maximized, the whole screen.
+const winArea = v => {
+    if (v.full) return fullRect();
+    const side = list => list.length ? 24 + Math.max(...list.map(s => s.dw || 320)) + 56 : 120;
+    const l = side(v.left), r = side(v.right);
+    return { x: l, y: 176, w: 1920 - l - r, h: 1080 - 176 - S.pillH - 32 };
+};
 const halves = g => { const w = Math.round((g.w - 16) / 2); return [{ ...g, w }, { ...g, x: g.x + w + 16, w: g.w - 16 - w }]; };
 // v: S, or a drag preview of it; maximized, two windows still share the screen half and half
-const geomOf = (s, v) => { const g = v.full ? fullRect() : { ...HOME }; return v.wins.length === 2 ? halves(g)[v.wins.indexOf(s)] : g; };
+const geomOf = (s, v) => { const g = winArea(v); return v.wins.length === 2 ? halves(g)[v.wins.indexOf(s)] : g; };
 
 // ---------- pieces ----------
 // an item whose pill shows a moving number names it with pillLive, so the ticker can update it in place
@@ -185,7 +194,7 @@ function layoutPass(v, preview) {
     stage.style.setProperty('--pillhL', rows[0].offsetHeight + 'px');
     stage.style.setProperty('--pillhR', rows[1].offsetHeight + 'px');
     const ph = Math.max(...rows.map(p => p.offsetHeight));
-    if (!preview && ph !== S.pillH) { S.pillH = ph; if (S.full && S.wins.length) return true; }
+    if (!preview && ph !== S.pillH) { S.pillH = ph; if (S.wins.length) return true; }
     const keep = preview ? op.ph : placed;
     const fold = (from, k) => {
         const s = v[from].splice(k, 1)[0], where = from === 'left' ? 'pillsL' : 'pillsR';
@@ -676,7 +685,7 @@ window.addEventListener('pointerup', e => {
     suppressClickUntil = performance.now() + 80;
     if (op.kind === 'drag') { track(toStage(e), true); return endDrag(); }     // let go: wherever it is now
     op = null;
-    render(false);
+    render();     // a dialog resized: the window makes room
 });
 // the browser took the touch over (or a second finger came): what was carried goes back
 function dropAll() {
@@ -781,8 +790,8 @@ function winTarget(i, p, v = shown) {
 }
 
 const MAXBAND = 120;     // the windows' pills start just below it
-// the dialog columns on an empty desktop end just short of the window, so a window's pill never starts inside one
-const COLS = { l: HOME.x - 8, r: HOME.x + HOME.w + 8 };
+// the dialog columns: a drop beside the window, or over its outer part, opens a dialog there
+const COLS = { l: 392, r: 1528 };
 function findTarget(p) {
     const v = shown;
     // The band above the windows (corners included) maximizes: a window, or anything else as the window. A window's
@@ -790,7 +799,7 @@ function findTarget(p) {
     // unless it goes to a screen edge, where the dialog columns are.
     const win = op.where === 'wins' && op.tab === null;
     // a preview that only maximizes or restores moves every window: they are hit where they really are
-    const real = op.target && ['max', 'unmax'].includes(op.target.kind) ? { wins: [...S.wins], full: S.full } : v;
+    const real = op.target && ['max', 'unmax'].includes(op.target.kind) ? { wins: [...S.wins], left: S.left, right: S.right, full: S.full } : v;
     const pill = real.wins.findIndex(s => inside(pillBox(s, real), p));
     if (pill >= 0) return winTarget(pill, p, real);
     if (S.full && win) {
@@ -808,13 +817,11 @@ function findTarget(p) {
     for (const where of ['pillsL', 'pillsR']) {
         if (inside(layoutRect(stage.querySelector(`.pills.${where === 'pillsL' ? 'left' : 'right'}`)), p, 12)) return nearestIn(where, p);
     }
-    // maximized, the windows lie under the dialog columns: the sides still take dialogs (a window's pill still takes tabs)
-    if (S.full && (p.x < COLS.l || p.x > COLS.r) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
+    // the sides take dialogs even where a window reaches under them (a window's pill still takes tabs)
+    if ((p.x < COLS.l || p.x > COLS.r) && p.y < 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'left' : 'right', p);
     for (let i = 0; i < real.wins.length; i++) { const t = winTarget(i, p, real); if (t !== undefined) return t; }
-    // empty desktop: the band above the pills, and the two dialog columns
+    // empty desktop: the band above the pills
     if (p.y > 1080 - S.pillH - 28) return nearestIn(p.x < 960 ? 'pillsL' : 'pillsR', p);
-    if (p.x < COLS.l) return nearestIn('left', p);
-    if (p.x > COLS.r) return nearestIn('right', p);
     // the middle of a desktop with no window left: it becomes the window
     if (!S.wins.some(w => op.tab !== null || w !== op.slot)) return { kind: 'open' };
     return null;
@@ -868,7 +875,7 @@ function regionBox(g) {
     if (g === 'left') return zone;
     if (g === 'right') return { ...zone, x: COLS.r, w: 1920 - COLS.r };
     if (g === 'pillsL' || g === 'pillsR') return layoutRect(stage.querySelector(`.pills.${g === 'pillsL' ? 'left' : 'right'}`));
-    if (g === 'open') return HOME;
+    if (g === 'open') return winArea(S);
     if (g === 'max') return { x: 0, y: 0, w: 1920, h: MAXBAND };
     if (g === 'unmax') return { x: 160, y: MAXBAND, w: 1600, h: 1080 - S.pillH - 28 - MAXBAND };
     // a window, where it really is (a maximize preview may have it elsewhere, or not at all)
