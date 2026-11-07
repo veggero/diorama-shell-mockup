@@ -419,3 +419,9 @@ body.dragging .pill .seg.trash { display: none; }
 /* touch: a finger carries pills, dialogs and window pills; a dialog whose content scrolls scrolls under the finger */
 .pill, .pill *, .dialog, .dialog * { touch-action: none; }
 .dialog .dscroll.scrolls, .dialog .dscroll.scrolls * { touch-action: pan-y; }
+
+/* the grip at the start of a grouped window's pill */
+.wtab .seg.grip { padding: 0 6px 0 10px; color: rgba(35, 38, 41, 0.45); cursor: grab; }
+.wtab .seg.grip:hover { color: var(--text); }
+.wtab .seg.grip + .seg { background-image: none; }
+#stage img { -webkit-user-drag: none; }

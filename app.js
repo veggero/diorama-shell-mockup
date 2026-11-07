@@ -55,13 +55,15 @@ const icon22 = id => !it(id).icon ? '' : it(id).icon.includes('/16/') ? ico(it(i
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // windows end where the dialog columns end, just above the pill rows
 const fullRect = () => ({ x: 24, y: 56, w: 1872, h: 1080 - 56 - S.pillH - 32 });
-// Not maximized, a window takes the room between the dialog columns that are open, with a margin on a side that has
-// none, so it moves over when only one side has dialogs. Maximized, the whole screen.
+// Not maximized, a window keeps the same margin all round: from the screen's top (counting its pill) and sides, and
+// above the pill rows. A side with dialogs open gives the window only the room beside them, so with dialogs on one
+// side the window moves over. Maximized, the whole screen.
+const PAD = 72;
 const winArea = v => {
     if (v.full) return fullRect();
-    const side = list => list.length ? 24 + Math.max(...list.map(s => s.dw || 320)) + 56 : 120;
-    const l = side(v.left), r = side(v.right);
-    return { x: l, y: 176, w: 1920 - l - r, h: 1080 - 176 - S.pillH - 32 };
+    const side = list => list.length ? 24 + Math.max(...list.map(s => s.dw || 320)) + 56 : PAD;
+    const l = side(v.left), r = side(v.right), top = PAD + 36;
+    return { x: l, y: top, w: 1920 - l - r, h: 1080 - 12 - S.pillH - PAD - top };
 };
 const halves = g => { const w = Math.round((g.w - 16) / 2); return [{ ...g, w }, { ...g, x: g.x + w + 16, w: g.w - 16 - w }]; };
 // v: S, or a drag preview of it; maximized, two windows still share the screen half and half
@@ -130,7 +132,9 @@ function footHTML(id) {
 
 function windowHTML(s, i, v) {
     const g = geomOf(s, v), id = s.tabs[s.on], grouped = s.tabs.length > 1, full = v.full;
-    const tabs = s.tabs.map((t, j) => `<div class="seg${grouped ? ' tabseg' + (j === s.on ? ' on' : ' off') : ''}${tornTab(s, j)}" data-tab="wins:${i}:${j}">${icon16(t)}<span class="semi">${esc(titleOf(t))}</span>${busy(t) ? '<span class="spinner"></span>' : ''}</div>`).join('');
+    // a grouped window's pill starts with a grip: grabbing it carries the whole window rather than one tab
+    const grip = grouped ? '<div class="seg grip"><svg viewBox="0 0 8 14" width="8" height="14"><g fill="currentColor"><circle cx="2" cy="3" r="1.1"/><circle cx="6" cy="3" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="6" cy="7" r="1.1"/><circle cx="2" cy="11" r="1.1"/><circle cx="6" cy="11" r="1.1"/></g></svg></div>' : '';
+    const tabs = grip + s.tabs.map((t, j) => `<div class="seg${grouped ? ' tabseg' + (j === s.on ? ' on' : ' off') : ''}${tornTab(s, j)}" data-tab="wins:${i}:${j}">${icon16(t)}<span class="semi">${esc(titleOf(t))}</span>${busy(t) ? '<span class="spinner"></span>' : ''}</div>`).join('');
     const moves = ['dialog', 'full', 'pin', 'pill'].map(d => {
         const m = s.pinned && d === 'pill' ? 'pillR' : s.pinned && d === 'dialog' ? 'unpin' : d;
         return `<div class="seg mv${d === 'full' && full ? ' cur' : ''}" data-mv="${i}:${d}" data-tip="${d === 'full' && full ? 'Back to normal size' : MAPS[m][0]}">${glyph(m)}</div>`;
@@ -638,6 +642,8 @@ stage.addEventListener('pointerover', e => {
 });
 stage.addEventListener('pointerout', e => { if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip(); });
 stage.addEventListener('pointerdown', hideTip, true);
+// an icon is an image the browser would drag on its own, taking the pointer away from the pill
+stage.addEventListener('dragstart', e => e.preventDefault());
 window.addEventListener('pointermove', e => { pointerAt = { x: e.clientX, y: e.clientY }; }, true);
 
 // ---------- pointer: drag anything anywhere, resize dialogs ----------
@@ -809,7 +815,7 @@ function winTarget(i, p, v = shown) {
     return own({ kind: 'split', slot: s, half: p.x < g.x + g.w / 2 ? 'left' : 'right' });
 }
 
-const MAXBAND = 120;     // the windows' pills start just below it
+const MAXBAND = PAD - 16;     // the windows' pills start just below it
 // the dialog columns: a drop beside the window, or over its outer part, opens a dialog there
 const COLS = { l: 392, r: 1528 };
 function findTarget(p) {
