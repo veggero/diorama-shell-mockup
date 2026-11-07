@@ -25,9 +25,9 @@ const FOOTER = false;
 const MAPS = {
     dialog: ['Reduce to dialog', '<rect class="d" x="2.8" y="5.4" width="5.2" height="6.8" rx="1"/>'],
     unpin: ['Unpin', '<rect class="d" x="2.8" y="5.4" width="5.2" height="6.8" rx="1"/>'],     // a pinned item goes back to the left
-    pill: ['Make it a pill', '<rect class="d" x="2.8" y="11.2" width="8" height="2.2" rx="1.1"/>'],
-    pillR: ['Make it a pill', '<rect class="d" x="11.2" y="11.2" width="8" height="2.2" rx="1.1"/>'],     // a pinned item folds to the right
-    pin: ['Pin this dialog', '<rect class="d" x="14" y="5.4" width="5.2" height="6.8" rx="1"/>'],
+    pill: ['Minimize', '<rect class="d" x="2.8" y="11.2" width="8" height="2.2" rx="1.1"/>'],
+    pillR: ['Minimize', '<rect class="d" x="11.2" y="11.2" width="8" height="2.2" rx="1.1"/>'],     // a pinned item folds to the right
+    pin: ['Minimize to pinned dialog', '<rect class="d" x="14" y="5.4" width="5.2" height="6.8" rx="1"/>'],
     full: ['Full screen', '<rect class="d" x="2.8" y="2.8" width="16.4" height="10.4" rx="1"/>'],
     window: ['Open as a window', '<rect class="d" x="5.8" y="3.8" width="10.4" height="7.4" rx="1"/>'],
 };
@@ -82,7 +82,7 @@ function dialogHTML(s, where, idx) {
     const id = s.tabs[s.on];
     // the same screen maps as a window's pill: to the other column, and to a pill on this side
     const other = where === 'left' ? 'pin' : 'unpin', fold = where === 'left' ? 'pill' : 'pillR';
-    const pin = `<div class="xbtn" data-pin="${where}:${idx}" data-tip="${MAPS[other][0]}">${glyph(other)}</div>`
+    const pin = `<div class="xbtn" data-pin="${where}:${idx}" data-tip="${other === 'pin' ? 'Pin dialog' : MAPS[other][0]}">${glyph(other)}</div>`
         + `<div class="xbtn" data-open="${where}:${idx}" data-tip="${MAPS.window[0]}">${glyph('window')}</div>`;
     const close = `<div class="xbtn" data-close="${where}:${idx}" data-tip="${MAPS[fold][0]}">${glyph(fold)}</div>`;
     const head = s.tabs.length > 1
@@ -587,11 +587,12 @@ let tipFor = null, tipTimer = 0, pointerAt = null;
 function showTip(el) {
     tip.textContent = el.dataset.tip;
     stage.appendChild(tip);
-    // centred just above it, as drawn now (scrolled lists included), and kept on the screen
-    const sr = stage.getBoundingClientRect(), b = el.getBoundingClientRect(), w = tip.offsetWidth;
+    // centred just above it, as drawn now (scrolled lists included), and kept on the screen;
+    // with no room above (a full-screen window's pill), just below
+    const sr = stage.getBoundingClientRect(), b = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
     const x = (b.left - sr.left) / scale, y = (b.top - sr.top) / scale;
     tip.style.left = `${clamp(x + b.width / scale / 2 - w / 2, 8, 1912 - w)}px`;
-    tip.style.top = `${y - tip.offsetHeight - 6}px`;
+    tip.style.top = `${y - h - 6 >= 8 ? y - h - 6 : y + b.height / scale + 6}px`;
     tip.classList.add('on');
 }
 function hideTip() { clearTimeout(tipTimer); tipFor = null; tip.classList.remove('on'); tip.remove(); }
